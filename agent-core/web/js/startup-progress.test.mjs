@@ -13,16 +13,20 @@ const cards = ['left', 'right'].map(card_id => ({
   card_id, mcp_id: 'tianyi', tool: 'wrist_camera',
 }));
 
-function progress(canvasCards = []) {
+function progress(canvasCards = [], mcps = []) {
   const rows = [];
   const countdowns = [];
   const waiting = [];
   let detached = false;
   let modalCards;
+  let modalTitles;
   const onEvent = runInNewContext(canvas.slice(start, end) + '\n_onEvent;', {
     _cards: canvasCards,
+    _allMcps: mcps,
+    toolTitle(tool) { return typeof tool === 'string' ? tool : tool.title || tool.name; },
     _showStartupModal(items) {
       modalCards = items.map(i => i.card);
+      modalTitles = items.map(i => i.title);
       rows.push(...items.map(() => ({ status: 'waiting' })));
       return {
         updateItem(i, status, message) { rows[i] = { status, message }; },
@@ -35,6 +39,7 @@ function progress(canvasCards = []) {
   onEvent({ type: 'project_start_begin', payload: { cards } });
   return {
     rows, countdowns, waiting, detached: () => detached, cards: () => modalCards,
+    titles: () => modalTitles,
     item(id, status, message = '') {
       onEvent({ type: 'project_start_item', payload: {
         card_id: id, mcp_id: 'tianyi', tool: 'wrist_camera', status, message,
@@ -54,6 +59,11 @@ test('startup rows retain the corresponding canvas card identity', () => {
   assert.deepEqual(Array.from(p.cards(), c => c.id), ['left', 'right']);
   const missing = progress();
   assert.deepEqual(Array.from(missing.cards(), c => c.id), ['left', 'right']);
+});
+
+test('startup rows use the advertised tool title when supplied', () => {
+  const p = progress([], [{ id: 'tianyi', tools: [{ name: 'wrist_camera', title: 'Wrist Camera' }] }]);
+  assert.deepEqual(Array.from(p.titles()), ['Wrist Camera', 'Wrist Camera']);
 });
 
 // Minimal DOM surface for executing the real row-rendering code.

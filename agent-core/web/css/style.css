@@ -1449,6 +1449,44 @@ html, body {
   align-items: center;
 }
 
+.canvas-video-input {
+  position: relative;
+  margin-left: 8px;
+  font-size: 12px;
+  pointer-events: auto;
+}
+
+.canvas-video-input summary {
+  white-space: nowrap;
+  cursor: pointer;
+  color: var(--text);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 9px;
+}
+
+.canvas-video-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(280px, 72vw);
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  color: var(--text);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  touch-action: auto;
+}
+
+.canvas-video-actions { display: flex; gap: 8px; }
+.canvas-video-status { color: var(--text-muted); overflow-wrap: anywhere; }
+.canvas-video-panel video { width: 100%; max-height: 32vh; background: #151515; }
+
 .canvas-main-btn {
   position: relative;
   padding: 12px 32px;

@@ -124,6 +124,10 @@ export function isInstanceConfigured(mcpId, toolName, instanceId) {
 /** Get all tool configs (shared + instance). */
 export function getToolConfigs() { return _toolConfigs; }
 
+export function toolTitle(tool) {
+  return typeof tool === 'string' ? tool : tool.title || tool.name;
+}
+
 /**
  * Refresh sidebar from pre-fetched MCP list.
  */
@@ -398,8 +402,9 @@ function _buildChip(mcp, tool) {
   chip.draggable = true;
   chip.dataset.mcpId = mcp.id;
   chip.dataset.toolName = tool.name;
+  chip.dataset.toolTitle = toolTitle(tool);
   chip.dataset.desc = (tool.description || '').toLowerCase();
-  chip.title = tool.description || tool.name;
+  chip.title = tool.description || toolTitle(tool);
 
   // Config button for tools with shared fields
   const configSchema = typeof tool === 'object' ? tool.configSchema : null;
@@ -415,7 +420,7 @@ function _buildChip(mcp, tool) {
   const configBtnHtml = hasSharedFields
     ? `<button class="chip-config-btn" title="配置"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-1.42 3.42 2 2 0 0 1-1.42-.58l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-3.42-1.42 2 2 0 0 1 .58-1.42l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 1.42-3.42 2 2 0 0 1 1.42.58l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1.08 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 3.42 1.42 2 2 0 0 1-.58 1.42l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1.08z"/></svg></button>`
     : '';
-  chip.innerHTML = `<span class="chip-name">${_esc(tool.name)}</span><button class="mobile-add-btn" title="添加到画布">+</button>${configBtnHtml}`;
+  chip.innerHTML = `<span class="chip-name">${_esc(toolTitle(tool))}</span><button class="mobile-add-btn" title="添加到画布">+</button>${configBtnHtml}`;
 
   // Mobile add-to-canvas button
   chip.querySelector('.mobile-add-btn').addEventListener('click', async (e) => {
@@ -472,8 +477,9 @@ function _onSearchInput(query) {
   const items = _scroll.querySelectorAll('.sidebar-tool-card, .sidebar-chip');
   for (const el of items) {
     const name = (el.dataset.toolName || '').toLowerCase();
+    const title = (el.dataset.toolTitle || '').toLowerCase();
     const desc = (el.dataset.desc || '').toLowerCase();
-    const match = !q || name.includes(q) || desc.includes(q);
+    const match = !q || title.includes(q) || name.includes(q) || desc.includes(q);
     el.classList.toggle('hidden', !match);
   }
 
@@ -509,6 +515,7 @@ function _buildToolCard(mcp, tool) {
   card.draggable = true;
   card.dataset.mcpId = mcp.id;
   card.dataset.toolName = tool.name;
+  card.dataset.toolTitle = toolTitle(tool);
   card.dataset.desc = (tool.description || '').toLowerCase();
 
   const configSchema = typeof tool === 'object' ? tool.configSchema : null;
@@ -549,7 +556,7 @@ function _buildToolCard(mcp, tool) {
     <div class="tool-card-header">
       <div class="tool-card-title-row">
         ${badgeHtml}
-        <span class="tool-card-name" title="${_esc(tool.name)}">${_esc(tool.name)}</span>
+        <span class="tool-card-name" title="${_esc(toolTitle(tool))}">${_esc(toolTitle(tool))}</span>
       </div>
       <div class="tool-card-actions">
         <button class="mobile-add-btn" title="添加到画布">+</button>
@@ -1216,9 +1223,7 @@ function _showDetail(mcp, tool, opts = {}) {
   const title = document.getElementById('tool-detail-title');
   const body = document.getElementById('tool-detail-body');
 
-  // Support plain string tool names
-  const toolName = typeof tool === 'string' ? tool : tool.name;
-  title.textContent = toolName;
+  title.textContent = toolTitle(tool);
 
   // Use overridden topics if provided (canvas instantiation), else fall back to tool definition
   const topicInData  = opts.topicIn  || (typeof tool === 'object' ? tool.topic_in  : null) || [];
