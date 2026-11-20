@@ -265,23 +265,19 @@ function _startCardMic(card) {
  * if it never got that far.
  */
 function _startCardCamera(card, { warm = false } = {}) {
-  const clip = _selectedCameraVideo();
   let deviceId = '';
   let warmed;
   const ready = new Promise((resolve) => { warmed = resolve; });
   const run = startCameraStream(_browserWsUrl('/ws/camera'), () => {}, async () => {
     try {
       const opts = cameraOptions(await fetchInstanceConfig(card.mcpId, card.toolName, card.id));
-      if (clip) return { ...opts, width: Math.max(960, opts.width || 0), video: clip };
       deviceId = opts.deviceId;
       if (warm) await warmPermission(deviceId);
       return opts;
     } finally {
       warmed();
     }
-  }).catch((err) => {
-    throw new Error(clip ? `视频输入启动失败：${err.message}` : describeMediaError(err, 'camera', deviceId));
-  });
+  }).catch((err) => { throw new Error(describeMediaError(err, 'camera', deviceId)); });
   // An already-running or already-starting stream never calls getOptions.
   run.then(warmed, warmed);
   return { run, ready };
@@ -292,16 +288,14 @@ async function _rearmBrowserSources() {
 
   const cameraCard = _cards.find(c => c.toolName === 'remote_camera');
   if (cameraCard && !isCameraActive()) {
-    const ok = _selectedCameraVideo() ? true : await _granted('camera');
+    const ok = await _granted('camera');
     if (ok === false || ok === null) {
       _logActivity('warn', ok === null
         ? '浏览器摄像头需要手动重新开启（此浏览器无法查询权限状态）'
         : '浏览器摄像头未授权，刷新后未自动恢复');
     } else {
       _startCardCamera(cameraCard).run
-        .then(ok => {
-          if (ok) _logActivity('project', _selectedCameraVideo() ? '已恢复视频输入' : '刷新后已恢复浏览器摄像头');
-        })
+        .then(ok => { if (ok) _logActivity('project', '刷新后已恢复浏览器摄像头'); })
         .catch(err => _logActivity('warn', `刷新后恢复：${err.message}`));
     }
   }
@@ -332,11 +326,6 @@ async function _rearmBrowserSources() {
 
 /** Record what the backend says about the run state, and unblock editing. */
 function _applyProjectState(running) {
-  const clip = _projectRunning && !running && _selectedCameraVideo();
-  if (clip) {
-    stopCameraStream();
-    clip.pause();
-  }
   _projectRunning = !!running;
   _projectStateKnown = true;
   _syncProjectBtn();
@@ -835,53 +824,6 @@ function _setupControlButtons() {
   // Auto-start toggle
   _initAutoStartToggle();
   _initTeardownChip();
-  _setupVideoInput();
-}
-
-function _selectedCameraVideo() {
-  const clip = document.getElementById('canvas-video-preview');
-  return clip?.hasAttribute('src') ? clip : null;
-}
-
-function _setupVideoInput() {
-  const input = document.getElementById('canvas-video-file');
-  const clip = document.getElementById('canvas-video-preview');
-  const status = document.getElementById('canvas-video-status');
-  const clear = document.getElementById('canvas-video-clear');
-  const canChange = () => {
-    const busy = document.getElementById('canvas-project-toggle').disabled;
-    if (!busy && _projectStateKnown && !_projectRunning) return true;
-    _showToast('请在停止智能控制后切换视频或摄像头');
-    return false;
-  };
-  const reset = () => {
-    if (clip.hasAttribute('src')) URL.revokeObjectURL(clip.src);
-    clip.pause();
-    clip.removeAttribute('src');
-    clip.load();
-    clip.hidden = true;
-    clear.hidden = true;
-    status.textContent = '当前输入：摄像头';
-    input.value = '';
-  };
-  document.getElementById('canvas-video-select').addEventListener('click', () => {
-    if (canChange()) input.click();
-  });
-  clear.addEventListener('click', () => {
-    if (canChange()) reset();
-  });
-  input.addEventListener('change', () => {
-    const file = input.files[0];
-    if (!file || !canChange()) return;
-    reset();
-    clip.src = URL.createObjectURL(file);
-    clip.hidden = false;
-    clear.hidden = false;
-    status.textContent = file.name;
-  });
-  clip.addEventListener('error', () => {
-    if (_selectedCameraVideo()) status.textContent = '无法读取此视频，请选择 Edge 能播放的视频文件。';
-  });
 }
 
 // ── Drop zone ─────────────────────────────────────────────────────────────────
@@ -2171,15 +2113,6 @@ function _autoStopOnDisconnect(cardId, portIdx, topic) {
 }
 
 async function _startProject() {
-  const clip = _selectedCameraVideo();
-  if (clip) {
-    if (clip.error || clip.readyState < 2 || !clip.videoWidth || clip.seeking) {
-      _showToast(clip.error || (clip.readyState >= 2 && !clip.videoWidth)
-        ? '无法读取此视频，请重新选择' : '视频正在载入，请等预览画面出现后再启动');
-      return;
-    }
-    clip.pause();
-  }
   // Save canvas layout first (so backend reads latest topology)
   await _saveLayout();
 
@@ -2271,22 +2204,9 @@ async function _startProject() {
   // remembered. Warming it here takes the person out of the critical path.
   const remoteCameraCard = _cards.find(c => c.toolName === 'remote_camera');
   if (remoteCameraCard && !isCameraActive()) {
-    const { run, ready } = _startCardCamera(remoteCameraCard, { warm: !clip });
-    if (clip) {
-      try {
-        if (!await run) {
-          offMotusEvent(_onEvent);
-          return;
-        }
-      } catch (err) {
-        offMotusEvent(_onEvent);
-        _showToast(err.message);
-        return;
-      }
-    } else {
-      run.catch(err => _logActivity('warn', err.message));
-      await ready;
-    }
+    const { run, ready } = _startCardCamera(remoteCameraCard, { warm: true });
+    run.catch(err => _logActivity('warn', err.message));
+    await ready;
   }
 
   // Call unified backend start-project
@@ -2296,7 +2216,6 @@ async function _startProject() {
       _applyProjectState(true);
       _logActivity('project', '智能控制已开启');
     } else {
-      if (clip && !_projectRunning) stopCameraStream();
       const data = await res.json().catch(() => ({}));
       _logActivity('error', `启动失败: ${data.detail || res.status}`);
       offMotusEvent(_onEvent);
@@ -2311,7 +2230,6 @@ async function _startProject() {
       }
     }
   } catch (e) {
-    if (clip && !_projectRunning) stopCameraStream();
     _logActivity('error', `启动失败: ${e.message}`);
     offMotusEvent(_onEvent);
     if (modal) modal.close();
@@ -2421,10 +2339,7 @@ async function _stopProject() {
       // Unconditional, not "if active": a stream still starting is not
       // active yet, and skipping it let the start finish after the stop and
       // go on sending into a stopped project.
-      if (card.toolName === 'remote_camera') {
-        stopCameraStream();
-        _selectedCameraVideo()?.pause();
-      }
+      if (card.toolName === 'remote_camera') stopCameraStream();
       if (card.toolName === 'remote_mic') {
         stopMicStream();
         _syncMicBtn(card, false);
@@ -3213,7 +3128,6 @@ async function _saveLayout() {
 function _syncEmptyState() {
   if (!_emptyEl) return;
   _emptyEl.style.display = _cards.length === 0 ? '' : 'none';
-  document.getElementById('canvas-video-input').hidden = !_cards.some(c => c.toolName === 'remote_camera');
 }
 
 function _esc(s) {

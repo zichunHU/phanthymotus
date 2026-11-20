@@ -21,6 +21,8 @@ let _ws = null;
 let _timer = null;
 let _active = false;
 let _video = null;
+let _canvas = null;
+let _rvfcArmed = false;
 let _sent = 0;
 let _startedAt = 0;
 // Bumped by every start and stop; an in-flight start checks it after each
@@ -130,7 +132,7 @@ export function cameraConstraints(deviceId) {
  *
  * @param {string} wsUrl        e.g. wss://host/ws/camera
  * @param {(active:boolean)=>void} onStateChange
- * @param {() => Promise<{fps?:number, deviceId?:string, width?:number, quality?:number, video?:HTMLVideoElement}>} [getOptions]
+ * @param {() => Promise<{fps?:number, deviceId?:string, width?:number, quality?:number}>} [getOptions]
  * @returns {Promise<boolean>} true when streaming; false if stopped while starting
  */
 export function startCameraStream(wsUrl, onStateChange, getOptions) {
@@ -186,30 +188,31 @@ async function _start(gen, wsUrl, onStateChange, getOptions) {
     const quality = opts.quality ?? DEFAULTS.quality;
     const target = opts.width ?? DEFAULTS.width;
 
-    if (!opts.video) {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: cameraConstraints(opts.deviceId),
-        audio: false,
-      });
-      if (cancelled()) { release(); return false; }
-      const track = stream.getVideoTracks()[0];
-      console.info(`[camera] capturing: ${track ? track.label || '(unlabelled)' : '(no track)'}`
-        + (opts.deviceId ? ' (selected device)' : ' (browser default)'));
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: cameraConstraints(opts.deviceId),
+      audio: false,
+    });
+    if (cancelled()) { release(); return false; }
+    const track = stream.getVideoTracks()[0];
+    console.info(`[camera] capturing: ${track ? track.label || '(unlabelled)' : '(no track)'}`
+      + (opts.deviceId ? ' (selected device)' : ' (browser default)'));
 
-      video = document.createElement('video');
-      video.srcObject = stream;
-      video.muted = true;
-      video.playsInline = true;
-      // Keep the live video in the document so the browser presents frames.
-      video.style.cssText =
-        'position:fixed;left:-10000px;top:0;width:2px;height:2px;opacity:0;pointer-events:none';
-      document.body.appendChild(video);
-      await video.play();
-      if (cancelled()) { release(); return false; }
-    }
+    video = document.createElement('video');
+    video.srcObject = stream;
+    video.muted = true;
+    video.playsInline = true;
+    // Attached to the document, off-screen. A detached <video> is not
+    // *presented*, and requestVideoFrameCallback fires per presented frame —
+    // so a video element that never enters the DOM delivers a trickle. Measured
+    // on a live session: 2 fps out of a 12 fps request, with the network, the
+    // server and the DDS publish all verified clean at 12.4 fps.
+    video.style.cssText =
+      'position:fixed;left:-10000px;top:0;width:2px;height:2px;opacity:0;pointer-events:none';
+    document.body.appendChild(video);
+    await video.play();
+    if (cancelled()) { release(); return false; }
 
-    const source = opts.video || video;
-    const size = fitCapture(source.videoWidth, source.videoHeight, target);
+    const size = fitCapture(video.videoWidth, video.videoHeight, target);
     const canvas = document.createElement('canvas');
     canvas.width = size.width;
     canvas.height = size.height;
@@ -226,8 +229,7 @@ async function _start(gen, wsUrl, onStateChange, getOptions) {
     if (cancelled()) { release(); return false; }
 
     // Commit. From here on _stopCamera owns them.
-    const socket = ws;
-    _stream = stream; _video = video; _ws = ws;
+    _stream = stream; _video = video; _canvas = canvas; _ws = ws;
     stream = video = ws = null;
 
     let sending = false;
@@ -235,22 +237,21 @@ async function _start(gen, wsUrl, onStateChange, getOptions) {
     let lastSent = 0;
 
     const sendFrame = () => {
-      if (cancelled() || socket.readyState !== WebSocket.OPEN
-          || source.readyState < 2 || source.seeking) return;
+      if (!_ws || _ws.readyState !== WebSocket.OPEN || !_video) return;
       // Skip rather than queue. A frame that arrives late is worse than one
       // that never arrives: the action rules measure velocity between frames,
       // so a backlog delivered in a burst reads as motion that did not happen.
-      if (sending || socket.bufferedAmount > 1 << 20) return;
+      if (sending || _ws.bufferedAmount > 1 << 20) return;
       const now = performance.now();
       if (now - lastSent < interval * 0.9) return;
       lastSent = now;
       sending = true;
-      ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
-      canvas.toBlob((blob) => {
+      _sent++;
+      ctx.drawImage(_video, 0, 0, _canvas.width, _canvas.height);
+      _canvas.toBlob(async (blob) => {
         try {
-          if (blob && !cancelled() && socket.readyState === WebSocket.OPEN) {
-            socket.send(blob);
-            _sent++;
+          if (blob && _ws && _ws.readyState === WebSocket.OPEN) {
+            _ws.send(await blob.arrayBuffer());
           }
         } finally {
           sending = false;
@@ -280,15 +281,15 @@ async function _start(gen, wsUrl, onStateChange, getOptions) {
     //
     // Each covers the other's gap, and whichever fires first in a given window
     // sends the frame; the second finds `now - lastSent` too small and returns.
-    if (!opts.video && typeof source.requestVideoFrameCallback === 'function') {
+    if (typeof _video.requestVideoFrameCallback === 'function') {
       const onFrame = () => {
-        if (cancelled()) return;
+        if (!_active) return;
         sendFrame();
-        source.requestVideoFrameCallback(onFrame);
+        if (_video) _video.requestVideoFrameCallback(onFrame);
       };
-      source.requestVideoFrameCallback(onFrame);
+      _rvfcArmed = true;
+      _video.requestVideoFrameCallback(onFrame);
     }
-    // A paused clip keeps publishing its selected frame for manual calibration.
     _timer = setInterval(sendFrame, interval);
 
     _active = true;
@@ -314,5 +315,7 @@ function _stopCamera() {
     _video.remove();              // it is in the document now
     _video = null;
   }
+  _canvas = null;
+  _rvfcArmed = false;
   _active = false;
 }
