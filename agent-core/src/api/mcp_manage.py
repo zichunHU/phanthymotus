@@ -470,7 +470,11 @@ async def mcp_add(req: MCPAddRequest):
             _save_mcp_list(mcps)
             mcp_id = existing['id']
         else:
-            mcp_id = f'mcp-{int(time.time())}'
+            used_ids = {m.get('id') for m in mcps}
+            serial = int(time.time())
+            while f'mcp-{serial}' in used_ids:
+                serial += 1
+            mcp_id = f'mcp-{serial}'
             mcps.append({
                 'id':          mcp_id,
                 'name':        req.name,
